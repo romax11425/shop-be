@@ -4,13 +4,13 @@ info:
   version: 1.0.0
 
 servers:
-  - url: https://l32255sj64.execute-api.eu-central-1.amazonaws.com/prod
+  - url: https://zs6ji7w1uh.execute-api.eu-west-1.amazonaws.com/prod
     variables:
       apiId:
-        default: l32255sj64
+        default: zs6ji7w1uh
         description: API Gateway ID
       region:
-        default: eu-central-1
+        default: eu-west-1
         description: AWS Region
       stage:
         default: prod
