@@ -11,7 +11,7 @@ export class ImportServiceStack extends cdk.Stack {
 	constructor(scope: Construct, id: string, props?: cdk.StackProps) {
 		super(scope, id, props);
 
-		const bucket = s3.Bucket.fromBucketName(this, 'ImportBucket', 'romax114-cs-import-service-bucket');
+		const bucket = s3.Bucket.fromBucketName(this, 'ImportBucket', 'romax114-import-service-bucket');
 
 		const importProductsFileFunction = new NodejsFunction(this, 'ImportProductsFileFunction', {
 			runtime: lambda.Runtime.NODEJS_20_X,
