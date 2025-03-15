@@ -3,7 +3,7 @@ import { handler } from '../../lambda/getProductsById';
 describe('getProductByIdHandler', () => {
   it('should return with the correct product', async () => {
     const mockEvent = {
-      pathParameters: { productId: "1" },
+      pathParameters: { productId: "4236bd78-dc82-4b7a-923c-b3ac85d2e45d" },
     };
 
     const response = await handler(mockEvent);
@@ -18,7 +18,7 @@ describe('getProductByIdHandler', () => {
     });
 
     const body = JSON.parse(response.body);
-    expect(body).toHaveProperty('id', "1");
+    expect(body).toHaveProperty('id', "4236bd78-dc82-4b7a-923c-b3ac85d2e45d");
     expect(body).toHaveProperty('title', "Product 1");
   });
 
