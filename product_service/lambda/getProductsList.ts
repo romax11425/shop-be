@@ -4,20 +4,24 @@ import { Product, ProductWithStock } from "../model/product";
 import { Stock } from "../model/stock";
 import { logger } from "../utils/logger";
 
+const awsRegion = process.env.AWS_REGION || 'eu-west-1';
+const productsTable = process.env.PRODUCTS_TABLE || 'Products';
+const stocksTable = process.env.STOCKS_TABLE || 'Stocks';
+
 export const handler = async () => {
 
     try {
         logger.info('Getting products list');
 
-        const client = new DynamoDBClient({ region: "eu-central-1" });
+        const client = new DynamoDBClient({ region: awsRegion });
         const dynamodb = DynamoDBDocumentClient.from(client);
 
         const productsResult = await dynamodb.send(new ScanCommand({
-            TableName: "Products",
+            TableName: productsTable,
         }));
 
         const stocksResult = await dynamodb.send(new ScanCommand({
-            TableName: "Stocks",
+            TableName: stocksTable,
         }));
 
         const products: Product[] = productsResult.Items as Product[] || [];
