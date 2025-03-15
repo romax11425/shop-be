@@ -3,6 +3,10 @@ import { DynamoDBDocumentClient, GetCommand, ScanCommand, TransactWriteCommand }
 import { randomUUID } from "crypto";
 import { logger } from "../utils/logger";
 
+const awsRegion = process.env.AWS_REGION || 'eu-west-1';
+const productsTable = process.env.PRODUCTS_TABLE || 'Products';
+const stocksTable = process.env.STOCKS_TABLE || 'Stocks';
+
 export const handler = async (event: any) => {
 
     try {
@@ -10,7 +14,7 @@ export const handler = async (event: any) => {
 
         const id = randomUUID();
         const {title, description, price, count} = JSON.parse(event.body);
-        const client = new DynamoDBClient({ region: "eu-central-1" });
+        const client = new DynamoDBClient({ region: awsRegion });
         const dynamodb = DynamoDBDocumentClient.from(client);
 
         if (!title || !description || !price || price < 0 || !count || count < 0) {
@@ -47,7 +51,7 @@ export const handler = async (event: any) => {
         }
 
         const product = {
-            TableName: "Products",
+            TableName: productsTable,
             Item: {
                 id,
                 title,
@@ -57,7 +61,7 @@ export const handler = async (event: any) => {
         };
 
         const stock = {
-            TableName: "Stocks",
+            TableName: stocksTable,
             Item: {
                 product_id: id,
                 count
