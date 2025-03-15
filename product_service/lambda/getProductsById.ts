@@ -4,12 +4,16 @@ import { Product, ProductWithStock } from "../model/product";
 import { Stock } from "../model/stock";
 import { logger } from "../utils/logger";
 
+const awsRegion = process.env.AWS_REGION || 'eu-west-1';
+const productsTable = process.env.PRODUCTS_TABLE || 'Products';
+const stocksTable = process.env.STOCKS_TABLE || 'Stocks';
+
 export const handler = async (event: any) => {
 
     try {
         logger.info('Getting product by id', event);
         
-        const client = new DynamoDBClient({ region: "eu-central-1" });
+        const client = new DynamoDBClient({ region: awsRegion });
         const dynamodb = DynamoDBDocumentClient.from(client);
         const productId = event.pathParameters?.productId;
 
@@ -28,14 +32,14 @@ export const handler = async (event: any) => {
         }
 
         const productsResult = await dynamodb.send(new GetCommand({
-            TableName: "Products",
+            TableName: productsTable,
             Key: {
                 id: productId
             }
         }));
 
         const stocksResult = await dynamodb.send(new GetCommand({
-            TableName: "Stocks",
+            TableName: stocksTable,
             Key: {
                 product_id: productId
             }

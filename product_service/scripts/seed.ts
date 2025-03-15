@@ -5,7 +5,7 @@ import { productsData } from '../mock/product';
 import { Product } from '../model/product';
 import { Stock } from '../model/stock';
 
-const client = new DynamoDBClient({ region: 'eu-central-1' });
+const client = new DynamoDBClient({ region: 'eu-west-1' });
 const dynamodb = DynamoDBDocumentClient.from(client);
 
 async function populateTables(): Promise<void> {
