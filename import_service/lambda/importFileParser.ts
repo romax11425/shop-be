@@ -1,9 +1,13 @@
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { Readable } from "stream";
 import csvParser from "csv-parser";
 import { logger } from "../utils/logger";
 
 const awsRegion = process.env.AWS_REGION || 'eu-west-1';
+const sqsQueueUrl = process.env.SQS_QUEUE_URL || '';
+
+const sqsClient = new SQSClient({ region: awsRegion });
 
 export const handler = async (event: any) => {
     try {
@@ -22,8 +26,8 @@ export const handler = async (event: any) => {
             logger.info('Parsing CSV file', objectKey);
             const stream = Readable.from(response.Body as Readable);
             stream.pipe(csvParser())
-                .on('data', (data: any) => {
-                    logger.info('Parsed record:', JSON.stringify(data));
+                .on('data', async (data: any) => {
+                    await sendDataToSQS(data)
                 })
                 .on('error', (error: unknown) => {
                     logger.error('Error parsing:', error as Error);
@@ -72,5 +76,25 @@ export const handler = async (event: any) => {
             },
             body: JSON.stringify({ message: 'Internal server error' }),
         };
+    }
+}
+
+async function sendDataToSQS(record: any): Promise<void> {
+    try {
+        const command = new SendMessageCommand({
+            QueueUrl: sqsQueueUrl,
+            MessageBody: JSON.stringify({
+                title: record.title,
+                description: record.description,
+                price: Number(record.price),
+                count: Number(record.count)
+            }),
+        });
+
+        await sqsClient.send(command);
+        logger.info('Successfully sent message to SQS:', record.title);
+    } catch (error) {
+        logger.error('Error sending message to SQS:', error as Error);
+        throw error;
     }
 }

@@ -6,6 +6,13 @@
       "es2020",
       "dom"
     ],
+    "outDir": "./dist",
+    "rootDir": "./",
+    "inlineSourceMap": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "strict": true,
     "noImplicitAny": true,
@@ -16,7 +23,6 @@
     "noUnusedParameters": false,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": false,
-    "inlineSourceMap": true,
     "inlineSources": true,
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
@@ -24,6 +30,9 @@
       "./node_modules/@types"
     ]
   },
+  "include": [
+    "**/*.ts"
+  ],
   "exclude": [
     "node_modules",
     "cdk.out"
