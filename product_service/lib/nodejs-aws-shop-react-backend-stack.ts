@@ -1,139 +1,173 @@
 import * as cdk from 'aws-cdk-lib';
-import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
-import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import * as sns from 'aws-cdk-lib/aws-sns';
-import * as sqs from 'aws-cdk-lib/aws-sqs';
-import path = require('path');
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import * as subscription from 'aws-cdk-lib/aws-sns-subscriptions';
-import * as dotenv from 'dotenv';
-
-dotenv.config({path: path.join(__dirname, '../.env')});
-
-const firstEmail = process.env.FIRST_EMAIL || 'firstemail@example.com';
-const secondaryEmail = process.env.SECONDARY_EMAIL || 'secondaryemail@example.com';
+import * as path from 'path';
+import { Construct } from 'constructs';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 
 export class NodejsAwsShopReactBackendStack extends cdk.Stack {
-	constructor(scope: Construct, id: string, props: cdk.StackProps) {
-		super(scope, id, props);
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+	super(scope, id, props);
 
-		// Define DynamoDB table
-		const productsTable = new dynamodb.Table(this, 'ProductsTable', {
-			partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
-			tableName: 'Products',
-			billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-			removalPolicy: cdk.RemovalPolicy.DESTROY,
-		});
+// Define DynamoDB table
+const productsTable = new dynamodb.Table(this, 'ProductsTable', {
+	partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+	tableName: 'Products',
+	billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+	removalPolicy: cdk.RemovalPolicy.DESTROY,
+});
 
-		const stocksTable = new dynamodb.Table(this, 'StocksTable', {
-			partitionKey: { name: 'product_id', type: dynamodb.AttributeType.STRING },
-			tableName: 'Stocks',
-			billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-			removalPolicy: cdk.RemovalPolicy.DESTROY,
-		});
+const stocksTable = new dynamodb.Table(this, 'StocksTable', {
+	partitionKey: { name: 'product_id', type: dynamodb.AttributeType.STRING },
+	tableName: 'Stocks',
+	billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+	removalPolicy: cdk.RemovalPolicy.DESTROY,
+});
 
-		const createProductTopic = new sns.Topic(this, 'CreateProductTopic', {
-			topicName: 'CreateProductTopic',
-		});
+	// Create SNS Topic
+	const createProductTopic = new sns.Topic(this, 'CreateProductTopic', {
+	  topicName: 'createProductTopic',
+	});
 
-		const catalogItemsQueue = new sqs.Queue(this, 'CatalogItemsQueue', {
-			queueName: 'CatalogItemsQueue',
-		});
+	// Add email subscription
+	createProductTopic.addSubscription(
+	  new subscriptions.EmailSubscription('romax114@gmail.com', {
+		filterPolicy: {
+		  price: sns.SubscriptionFilter.numericFilter({
+			greaterThanOrEqualTo: 800,
+		  }),
+		},
+		json: false,
+	  })
+	);
+	createProductTopic.addSubscription(
+	  new subscriptions.EmailSubscription('romax114@mail.ru', {
+		filterPolicy: {
+		  price: sns.SubscriptionFilter.numericFilter({
+			lessThan: 800,
+		  }),
+		},
+		json: false,
+	  })
+	);
 
-		//Define Lambda function resource
-		const getProductsListFunction = new NodejsFunction(this, 'GetProductsListFunction', {
-			runtime: lambda.Runtime.NODEJS_20_X,
-			handler: 'handler',
-			entry: path.join(__dirname, '../lambda/getProductsList.ts'),
-			environment: {
-				PRODUCTS_TABLE_NAME: productsTable.tableName,
-				STOCKS_TABLE_NAME: stocksTable.tableName,
-			},
-		});
+	// Create SQS Queue
+	const catalogItemsQueue = new sqs.Queue(this, 'CatalogItemsQueue', {
+	  queueName: 'catalogItemsQueue',
+	});
 
-		const getProductsByIdFunction = new NodejsFunction(this, 'GetProductsByIdFunction', {
-			runtime: lambda.Runtime.NODEJS_20_X,
-			handler: 'handler',
-			entry: path.join(__dirname, '../lambda/getProductsById.ts'),
-			environment: {
-				PRODUCTS_TABLE_NAME: productsTable.tableName,
-				STOCKS_TABLE_NAME: stocksTable.tableName,
-			},
-		});
+	// Define the Lambda function using NodejsFunction
+	const getProductsFunction = new NodejsFunction(this, 'GetProductsFunction', {
+	  runtime: lambda.Runtime.NODEJS_18_X,
+	  handler: 'handler',
+	  entry: path.join(__dirname, '../lambda/getProductsList.ts'),
+	  bundling: {
+		externalModules: [],
+		minify: true,
+		sourceMap: true,
+	  },
+	  environment: {
+		PRODUCTS_TABLE: productsTable.tableName,
+		STOCKS_TABLE: stocksTable.tableName,
+	  },
+	});
 
-		const createProduct = new NodejsFunction(this, 'CreateProduct', {
-			runtime: lambda.Runtime.NODEJS_20_X,
-			handler: 'handler',
-			entry: path.join(__dirname, '../lambda/createProduct.ts'),
-			environment: {
-				PRODUCTS_TABLE_NAME: productsTable.tableName,
-				STOCKS_TABLE_NAME: stocksTable.tableName,
-			},
-		});
+	// Add the getProductById function
+	const getProductByIdFunction = new NodejsFunction(this, 'GetProductByIdFunction', {
+	  runtime: lambda.Runtime.NODEJS_18_X,
+	  handler: 'handler',
+	  entry: path.join(__dirname, '../lambda/getProductsById.ts'),
+	  bundling: {
+		externalModules: [],
+		minify: true,
+		sourceMap: true,
+	  },
+	  environment: {
+		PRODUCTS_TABLE: productsTable.tableName,
+		STOCKS_TABLE: stocksTable.tableName,
+	  },
+	});
 
-		const catalogBatchProcessFunction = new NodejsFunction(this, 'catalogBatchProcess', {
-			runtime: lambda.Runtime.NODEJS_20_X,
-			handler: 'handler',
-			entry: path.join(__dirname, '../lambda/catalogBatchProcess.ts'),
-			environment: {
-				PRODUCTS_TABLE_NAME: productsTable.tableName,
-				STOCKS_TABLE_NAME: stocksTable.tableName,
-				CREATE_PRODCUT_TOPIC_ARN: createProductTopic.topicArn,
-			},
-		});
+	// Define the Lambda function for createProduct
+	const createProductFunction = new NodejsFunction(this, 'CreateProductFunction', {
+	  runtime: lambda.Runtime.NODEJS_18_X,
+	  handler: 'handler',
+	  entry: path.join(__dirname, '../lambda/getProductsById.ts'),
+	  bundling: {
+		externalModules: [],
+		minify: true,
+		sourceMap: true,
+	  },
+	  environment: {
+		PRODUCTS_TABLE: productsTable.tableName,
+		STOCKS_TABLE: stocksTable.tableName,
+	  },
+	  timeout: cdk.Duration.seconds(30),
+	});
 
-		// Define API Gateway resource
-		const api = new apigateway.RestApi(this, 'ProductServiceApi', {
-			restApiName: 'Product Service',
-            defaultCorsPreflightOptions: {
-				allowOrigins: apigateway.Cors.ALL_ORIGINS,
-				allowMethods: ['GET'],
-				allowHeaders: ['Content-Type'],
-            },
-		});
+	// Create Lambda function
+	const catalogBatchProcess = new NodejsFunction(this, 'CatalogBatchProcess', {
+	  runtime: lambda.Runtime.NODEJS_18_X,
+	  handler: 'handler',
+	  entry: path.join(__dirname, '../lambda/catalogBatchProcess.ts'),
+	  timeout: cdk.Duration.seconds(30),
+	  bundling: {
+		externalModules: [],
+		minify: true,
+		sourceMap: true,
+	  },
+	  environment: {
+		SNS_TOPIC_ARN: createProductTopic.topicArn,
+		PRODUCTS_TABLE: productsTable.tableName,
+		STOCKS_TABLE: stocksTable.tableName,
+	  },
+	});
 
-		productsTable.grantReadData(getProductsListFunction);
-		productsTable.grantReadData(getProductsByIdFunction);
-		productsTable.grantWriteData(createProduct);
-		productsTable.grantWriteData(catalogBatchProcessFunction);
+	// Add SQS as event source for Lambda
+	catalogBatchProcess.addEventSource(new lambdaEventSources.SqsEventSource(catalogItemsQueue, {
+	  batchSize: 5,
+	}));
 
-		stocksTable.grantReadData(getProductsListFunction);
-		stocksTable.grantReadData(getProductsByIdFunction);
-		stocksTable.grantWriteData(createProduct);
-		stocksTable.grantWriteData(catalogBatchProcessFunction);
+	// Grant permissions to Lambda functions
+	productsTable.grantReadData(getProductsFunction);
+	stocksTable.grantReadData(getProductsFunction);
+	productsTable.grantReadData(getProductByIdFunction);
+	stocksTable.grantReadData(getProductByIdFunction);
+	productsTable.grantWriteData(createProductFunction);
+	stocksTable.grantWriteData(createProductFunction);
+	productsTable.grantWriteData(catalogBatchProcess);
+	stocksTable.grantWriteData(catalogBatchProcess);
+	createProductTopic.grantPublish(catalogBatchProcess);
+	catalogItemsQueue.grantConsumeMessages(catalogBatchProcess);
 
-		catalogItemsQueue.grantConsumeMessages(catalogBatchProcessFunction);
-		createProductTopic.grantPublish(catalogBatchProcessFunction);
+	// Create API Gateway
+	const api = new apigateway.RestApi(this, 'ProductsApi', {
+	  restApiName: 'Products Service',
+	  defaultCorsPreflightOptions: {
+		allowOrigins: apigateway.Cors.ALL_ORIGINS,
+		allowMethods: apigateway.Cors.ALL_METHODS,
+		allowHeaders: ['Content-Type', 'X-Amz-Date', 'Authorization', 'X-Api-Key'],
+		allowCredentials: true,
+	  },
+	});
 
-		// Define lambda resources and methods
-		const products = api.root.addResource('products');
-		products.addMethod('GET', new apigateway.LambdaIntegration(getProductsListFunction));
-		products.addMethod('POST', new apigateway.LambdaIntegration(createProduct));
+	// Create products resource and methods
+	const products = api.root.addResource('products');
+	products.addMethod('GET', new apigateway.LambdaIntegration(getProductsFunction));
+	products.addMethod('POST', new apigateway.LambdaIntegration(createProductFunction));
 
-		const productsById = products.addResource('{productId}');
-		productsById.addMethod('GET', new apigateway.LambdaIntegration(getProductsByIdFunction));
+	const product = products.addResource('{id}');
+	product.addMethod('GET', new apigateway.LambdaIntegration(getProductByIdFunction));
 
-		// Define SQS resource
-		catalogBatchProcessFunction.addEventSource(new SqsEventSource(catalogItemsQueue, {
-			batchSize: 5,
-		}));
-
-		// Define SNS resource
-		createProductTopic.addSubscription(new subscription.EmailSubscription(firstEmail, {
-			filterPolicy: {
-				price: sns.SubscriptionFilter.numericFilter({lessThan: 20}),
-			},
-			json: false,
-		}));
-
-		createProductTopic.addSubscription(new subscription.EmailSubscription(secondaryEmail, {
-			filterPolicy: {
-				price: sns.SubscriptionFilter.numericFilter({greaterThan: 20}),
-			},
-			json: false,
-		}));
-	}
+	// Output the API Gateway URL
+	new cdk.CfnOutput(this, 'ProductsApiEndpoint', {
+	  value: api.url,
+	  description: 'The URL of the Products API',
+	});
+  }
 }

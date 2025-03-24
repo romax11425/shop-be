@@ -1,144 +1,175 @@
-import { APIGatewayProxyEvent, S3Event } from 'aws-lambda';
+import { S3Event } from 'aws-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
-import {
-  S3Client,
-  GetObjectCommand,
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  PutObjectCommand,
-} from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
-import { handler } from '../lambda/importFileParser';
+import { importFileParser } from '../lambda/importFileParser';
 import { sdkStreamMixin } from '@aws-sdk/util-stream';
 
 const s3Mock = mockClient(S3Client);
 
-describe('testing importFileParser', () => {
+jest.mock('@aws-lambda-powertools/logger', () => ({
+  Logger: jest.fn().mockImplementation(() => ({
+    info: jest.fn(),
+    error: jest.fn(),
+  })),
+}));
+
+describe('importFileParser Lambda', () => {
   beforeEach(() => {
     s3Mock.reset();
     jest.clearAllMocks();
   });
 
-  it('should process CSV file', async () => {
-    const mockCsvData =
-      'id,title,description\n1,Phone,Smart Phone\n2,Tablet, Kindle Tablet';
+  it('should process CSV file successfully', async () => {
+    const mockCsvData = 'id,title,description\n1,Product 1,Description 1\n2,Product 2,Description 2';
+    const mockStream = sdkStreamMixin(Readable.from([mockCsvData]));
+
+    // Mock S3 response
+    s3Mock.on(GetObjectCommand).resolves({
+      Body: mockStream,
+      $metadata: { httpStatusCode: 200 }
+    });
+    s3Mock.on(CopyObjectCommand).resolves({
+        $metadata: { httpStatusCode: 200 }
+      });
+    s3Mock.on(DeleteObjectCommand).resolves({
+      $metadata: { httpStatusCode: 200 }
+    });
+
+    // Create mock S3 event
+    const event: S3Event = {
+      Records: [{
+        s3: {
+          bucket: {
+            name: 'test-bucket'
+          },
+          object: {
+            key: 'uploaded/test.csv'
+          }
+        }
+      }]
+    } as any;
+
+    const response = await importFileParser(event);
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('should skip files not in uploaded folder', async () => {
+    const event: S3Event = {
+      Records: [{
+        s3: {
+          bucket: {
+            name: 'test-bucket'
+          },
+          object: {
+            key: 'parsed/test.csv'
+          }
+        }
+      }]
+    } as any;
+
+    const response = await importFileParser(event);
+
+    expect(response.statusCode).toBe(200);
+    expect(s3Mock.calls()).toHaveLength(0);
+  });
+
+  it('should handle empty file body', async () => {
+    s3Mock.on(GetObjectCommand).resolves({
+      Body: undefined,
+      $metadata: { httpStatusCode: 200 }
+    });
+
+    const event: S3Event = {
+      Records: [{
+        s3: {
+          bucket: {
+            name: 'test-bucket'
+          },
+          object: {
+            key: 'uploaded/test.csv'
+          }
+        }
+      }]
+    } as any;
+
+    await expect(importFileParser(event)).rejects.toThrow('Empty file body');
+  });
+
+  it('should handle S3 errors', async () => {
+    s3Mock.on(GetObjectCommand).rejects(new Error('S3 Error'));
+
+    const event: S3Event = {
+      Records: [{
+        s3: {
+          bucket: {
+            name: 'test-bucket'
+          },
+          object: {
+            key: 'uploaded/test.csv'
+          }
+        }
+      }]
+    } as any;
+
+    await expect(importFileParser(event)).rejects.toThrow('S3 Error');
+  });
+
+  it('should handle CSV parsing errors', async () => {
+    const mockInvalidCsvData = 'invalid,csv\ndata';
+    const mockStream = sdkStreamMixin(Readable.from([mockInvalidCsvData]));
+
+    s3Mock.on(GetObjectCommand).resolves({
+      Body: mockStream,
+      $metadata: { httpStatusCode: 200 }
+    });
+
+    const event: S3Event = {
+      Records: [{
+        s3: {
+          bucket: {
+            name: 'test-bucket'
+          },
+          object: {
+            key: 'uploaded/test.csv'
+          }
+        }
+      }]
+    } as any;
+
+    const response = await importFileParser(event);
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('should process multiple records', async () => {
+    const mockCsvData = 'id,title\n1,Product 1';
     const mockStream = sdkStreamMixin(Readable.from([mockCsvData]));
 
     s3Mock.on(GetObjectCommand).resolves({
       Body: mockStream,
-      $metadata: { httpStatusCode: 200 },
-    });
-    s3Mock.on(CopyObjectCommand).resolves({
-      $metadata: { httpStatusCode: 200 },
-    });
-    s3Mock.on(DeleteObjectCommand).resolves({
-      $metadata: { httpStatusCode: 200 },
+      $metadata: { httpStatusCode: 200 }
     });
 
     const event: S3Event = {
       Records: [
         {
           s3: {
-            bucket: {
-              name: 'mock',
-            },
-            object: {
-              key: 'uploaded/mock.csv',
-            },
-          },
+            bucket: { name: 'test-bucket' },
+            object: { key: 'uploaded/test1.csv' }
+          }
         },
-      ],
-    } as any;
-
-    const response = await handler(event);
-    expect(response.statusCode).toBe(200);
-  });
-
-  it('should gracefully handle missing file body', async () => {
-    s3Mock.on(GetObjectCommand).resolves({
-      Body: undefined,
-      $metadata: { httpStatusCode: 200 },
-    });
-
-    const event: S3Event = {
-      Records: [
         {
           s3: {
-            bucket: {
-              name: 'mock',
-            },
-            object: {
-              key: 'uploaded/mock.csv',
-            },
-          },
-        },
-      ],
-    } as any;
-
-    const response = await handler(event);
-    expect(response.statusCode).toBe(500);
-  });
-  it('should handle S3 bucket related errors', async () => {
-    s3Mock.on(GetObjectCommand).rejects(new Error('S3 bucket Error'));
-
-    const event: S3Event = {
-      Records: [
-        {
-          s3: {
-            bucket: {
-              name: 'mock',
-            },
-            object: {
-              key: 'uploaded/mock.csv',
-            },
-          },
-        },
-      ],
-    } as any;
-
-    const response = await handler(event);
-    expect(response.statusCode).toBe(500);
-  });
-
-  it('should handle malformed CSV data', async () => {
-    const malformedData = ',csv\ndataasdpfasdoy';
-    const mockStream = sdkStreamMixin(Readable.from([malformedData]));
-
-    s3Mock.on(GetObjectCommand).resolves({
-      Body: mockStream,
-      $metadata: { httpStatusCode: 200 },
-    });
-
-    const event: S3Event = {
-      Records: [
-        {
-          s3: {
-            bucket: {
-              name: 'mock',
-            },
-            object: {
-              key: 'uploaded/mock.csv',
-            },
-          },
-        },
-      ],
-    } as any;
-
-    const response = await handler(event);
-    expect(response.statusCode).toBe(200);
-  });
-
-  it('should handle S3 errors gracefully', async () => {
-    // Mock S3 client to throw an error
-    s3Mock.on(PutObjectCommand).rejects(new Error('some S3 bucket error'));
-
-    const mockEvent: APIGatewayProxyEvent = {
-        queryStringParameters: {
-            name: 'test.csv'
+            bucket: { name: 'test-bucket' },
+            object: { key: 'uploaded/test2.csv' }
+          }
         }
-    } as any as APIGatewayProxyEvent;
+      ]
+    } as any;
 
-    const response = await handler(mockEvent);
-    expect(response.statusCode).toBe(500);
-});
+    const response = await importFileParser(event);
+
+    expect(response.statusCode).toBe(200);
+    expect(s3Mock.calls().filter(call => call.args[0] instanceof GetObjectCommand)).toHaveLength(2);
+  });
 });
