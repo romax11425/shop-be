@@ -1,76 +1,122 @@
-import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { Readable } from "stream";
-import csvParser from "csv-parser";
-import { logger } from "../utils/logger";
+import { S3Event } from 'aws-lambda';
+import { S3Client, GetObjectCommand, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { Logger } from '@aws-lambda-powertools/logger';
+import csvParser from 'csv-parser';
+import { Readable } from 'stream';
 
-const awsRegion = process.env.AWS_REGION || 'eu-west-1';
+const s3Client = new S3Client({ region: 'eu-west-1' });
+const sqsClient = new SQSClient({ region: 'eu-west-1' });
+const logger = new Logger({ serviceName: 'importFileParser' });
 
-export const handler = async (event: any) => {
-    try {
-        logger.info('Processing file', event);
+export const importFileParser = async (event: S3Event) => {
+  try {
+    logger.info('Processing S3 event', { event });
 
-        const s3Client = new S3Client({ region: awsRegion });
-        const bucketName = event.Records[0].s3.bucket.name;
-        const objectKey = decodeURIComponent(event.Records[0].s3.object.key.replace(/\+/g, " "));
+    for (const record of event.Records) {
+      const bucket = record.s3.bucket.name;
+      const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
 
-        const response = await s3Client.send(new GetObjectCommand({
-            Bucket: bucketName,
-            Key: objectKey,
-        }));
+      if (!key.startsWith('uploaded/')) {
+        logger.info('Skipping file not in uploaded folder', { key });
+        continue;
+      }
 
-        await new Promise((resolve, reject) => {
-            logger.info('Parsing CSV file', objectKey);
-            const stream = Readable.from(response.Body as Readable);
-            stream.pipe(csvParser())
-                .on('data', (data: any) => {
-                    logger.info('Parsed record:', JSON.stringify(data));
-                })
-                .on('error', (error: unknown) => {
-                    logger.error('Error parsing:', error as Error);
-                    reject(error);
-                })
-                .on('end', () => {
-                    logger.info('CSV parsing completed');
-                    resolve("Success");
-                });
-        });
+      logger.info('Processing file', { bucket, key });
 
-        const newKey = objectKey.replace('uploaded/', 'parsed/');
+      const { Body } = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+        })
+      );
+
+      if (!Body) {
+        throw new Error('Empty file body');
+      }
+
+      const stream = Body as Readable;
+      const records: any[] = []; // Store records temporarily
+
+      // Parse the CSV file
+      await new Promise((resolve, reject) => {
+        stream
+          .pipe(csvParser())
+          .on('data', (data) => {
+            // Collect records instead of sending immediately
+            records.push(data);
+          })
+          .on('error', (error) => {
+            logger.error('Error parsing CSV', { error });
+            reject(error);
+          })
+          .on('end', () => resolve(null));
+      });
+
+      // Now process records sequentially
+      logger.info(`Processing ${records.length} records`);
+      
+      for (const data of records) {
+        try {
+          const messageBody = {
+            title: data.title,
+            description: data.description,
+            price: Number(data.price),
+            count: Number(data.count)
+          };
+
+          logger.info('Sending message to SQS', { messageBody });
+
+          const result = await sqsClient.send(new SendMessageCommand({
+            QueueUrl: 'https://sqs.eu-west-1.amazonaws.com/605134451272/catalogItemsQueue',
+            MessageBody: JSON.stringify(messageBody)
+          }));
+
+          logger.info('Successfully sent message to SQS', { 
+            messageId: result.MessageId,
+            data: messageBody 
+          });
+        } catch (error) {
+          logger.error('Error sending record to SQS', { 
+            error 
+          });
+        }
+      }
+
+      // Move file after processing all records
+      try {
+        const newKey = key.replace('uploaded/', 'parsed/');
 
         await s3Client.send(new CopyObjectCommand({
-            Bucket: bucketName,
-            CopySource: `${bucketName}/${objectKey}`,
-            Key: newKey,
+          Bucket: bucket,
+          CopySource: `${bucket}/${key}`,
+          Key: newKey
         }));
+
+        logger.info('File copied to parsed folder', { newKey });
 
         await s3Client.send(new DeleteObjectCommand({
-            Bucket: bucketName,
-            Key: objectKey,
+          Bucket: bucket,
+          Key: key
         }));
 
-        logger.info('File processed');
-
-        return {
-            statusCode: 200,
-            headers: {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET",
-                "Access-Control-Allow-Headers": "Content-Type"
-            },
-            body: JSON.stringify({ message: 'File processed' }),
-        };
-
-    } catch (error) {
-        return {
-            statusCode: 500,
-            headers: {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET",
-                "Access-Control-Allow-Headers": "Content-Type"
-            },
-            body: JSON.stringify({ message: 'Internal server error' }),
-        };
+        logger.info('File deleted from uploaded folder', { key });
+      } catch (error) {
+        logger.error('Error moving file', { 
+          error
+        });
+        throw error;
+      }
     }
-}
+
+    return { 
+      statusCode: 200, 
+      body: JSON.stringify({ message: 'Processing completed' })
+    };
+  } catch (error) {
+    logger.error('Error processing S3 event', { 
+      error 
+    });
+    throw error;
+  }
+};

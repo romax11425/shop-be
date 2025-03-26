@@ -25,6 +25,7 @@
     "@aws-lambda-powertools/commons": "^1.x.x",
     "@aws-lambda-powertools/logger": "^1.x.x",
     "@aws-sdk/client-s3": "^3.758.0",
+    "@aws-sdk/client-sqs": "^3.758.0",
     "@aws-sdk/s3-request-presigner": "^3.758.0",
     "@aws-sdk/types": "^3.734.0",
     "@aws-sdk/util-stream": "^3.370.0",

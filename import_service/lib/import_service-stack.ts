@@ -1,63 +1,120 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
-import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import path = require('path');
+import * as path from 'path';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class ImportServiceStack extends cdk.Stack {
-	constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-		super(scope, id, props);
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
 
-		const bucket = s3.Bucket.fromBucketName(this, 'ImportBucket', 'romax114-import-service-bucket');
+    // Reference existing S3 bucket
+    const bucket = s3.Bucket.fromBucketName(this, 'ImportBucket', 'romax114-import-service-bucket');
 
-		const importProductsFileFunction = new NodejsFunction(this, 'ImportProductsFileFunction', {
-			runtime: lambda.Runtime.NODEJS_20_X,
-			handler: 'handler',
-			entry: path.join(__dirname, '../lambda/importProductsFile.ts'),
-			environment: {
-				BUCKET_NAME: bucket.bucketName,
-			},
-		});
+    // Reference the existing SQS queue
+    const catalogItemsQueue = sqs.Queue.fromQueueArn(
+      this,
+      'CatalogItemsQueue',
+      `arn:aws:sqs:eu-west-1:605134451272:catalogItemsQueue`
+    );
 
-		const importFileParserFunction = new NodejsFunction(this, 'ImportFileParserFunction', {
-			runtime: lambda.Runtime.NODEJS_20_X,
-			handler: 'handler',
-			entry: path.join(__dirname, '../lambda/importFileParser.ts'),
-			environment: {
-				BUCKET_NAME: bucket.bucketName,
-			},
-		});
+    // Create policy
+    const rootUserPolicy = new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'sqs:SendMessage',
+        'sqs:ReceiveMessage',
+        'sqs:DeleteMessage',
+        'sqs:GetQueueAttributes',
+        'sqs:GetQueueUrl',
+        'sqs:ListQueues'
+      ],
+      resources: [catalogItemsQueue.queueArn],
+      principals: [
+        new iam.AccountRootPrincipal()
+      ]
+    });
 
-		// Define API Gateway resource
-		const api = new apigateway.RestApi(this, 'ImportServiceApi', {
-			restApiName: 'Import Service',
-            defaultCorsPreflightOptions: {        
-				allowOrigins: apigateway.Cors.ALL_ORIGINS,
-				allowMethods: apigateway.Cors.ALL_METHODS,
-				allowHeaders: apigateway.Cors.DEFAULT_HEADERS,
-            },
-		});
+    // Add the policy to the queue
+    catalogItemsQueue.addToResourcePolicy(rootUserPolicy);
 
-		bucket.grantReadWrite(importProductsFileFunction);
-		bucket.grantReadWrite(importFileParserFunction);
+    const importProductsFileLambda = new NodejsFunction(this, 'ImportProductsFileFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'importProductsFile',
+      entry: path.join(__dirname, '../lambda/importProductsFile.ts'),
+      environment: {
+        BUCKET_NAME: bucket.bucketName,
+        REGION: this.region,
+      },
+      bundling: {
+        externalModules: [],
+        minify: true,
+        sourceMap: true,
+      },
+    });
 
-		const importResource = api.root.addResource('import');
-		importResource.addMethod('GET', new apigateway.LambdaIntegration(importProductsFileFunction), {
-			requestParameters: {
-				'method.request.querystring.name': true,
-			},
-			requestValidatorOptions: {
-				validateRequestParameters: true,
-			},
-		});
+    const importFileParserFunction = new NodejsFunction(this, 'ImportFileParserFunction', {
+      functionName: 'importFileParser',
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'importFileParser',
+      entry: path.join(__dirname, '../lambda/importFileParser.ts'),
+      environment: {
+        BUCKET_NAME: bucket.bucketName,
+        REGION: this.region,
+      },
+      bundling: {
+        externalModules: [],
+        minify: true,
+        sourceMap: true,
+      },
+    });
 
-		bucket.addEventNotification(
-			s3.EventType.OBJECT_CREATED,
-			new s3n.LambdaDestination(importFileParserFunction),
-			{ prefix: 'uploaded/' }
-		);
-	}
+    // Grant S3 permissions to the Lambda function
+    bucket.grantReadWrite(importProductsFileLambda);
+    bucket.grantReadWrite(importFileParserFunction);
+
+    // Grant SQS permissions to Lambda and user
+    importFileParserFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['sqs:SendMessage'],
+        resources: [catalogItemsQueue.queueArn],
+      })
+    );
+
+    // Create API Gateway
+    const api = new apigateway.RestApi(this, 'ImportApi', {
+      restApiName: 'Import Service',
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+      },
+    });
+
+    // Create the /import resource
+    const importResource = api.root.addResource('import');
+    importResource.addMethod('GET', new apigateway.LambdaIntegration(importProductsFileLambda), {
+      requestParameters: {
+        'method.request.querystring.name': true,
+      },
+    });
+
+    // Add S3 event notification for the 'uploaded' folder
+    bucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(importFileParserFunction),
+      { prefix: 'uploaded/' }
+    );
+
+    // Output the API URL
+    new cdk.CfnOutput(this, 'ApiUrl', {
+      value: api.url,
+      description: 'The URL of the Import API',
+    });
+  }
 }
